@@ -1,0 +1,148 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USERNAME}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env
+  
+  go-gateway:
+    build:
+      context: ./go_gateway
+      dockerfile: Dockerfile.go 
+    container_name: go_webhook_gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      WEBHOOK_HMAC_SECRET: ${WEBHOOK_HMAC_SECRET}
+    env_file:
+      - .env
+
+  django-web:
+    build: .
+    container_name: django-docker
+    depends_on:
+      - db
+      - redis
+      - waha
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DEBUG: ${DEBUG}
+      DJANGO_LOGLEVEL: ${DJANGO_LOGLEVEL}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
+      DATABASE_ENGINE: ${DATABASE_ENGINE}
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USERNAME: ${DATABASE_USERNAME}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_HOST: ${DATABASE_HOST}
+      DATABASE_PORT: ${DATABASE_PORT}
+      WEBHOOK_HMAC_SECRET: ${WEBHOOK_HMAC_SECRET}
+      GOOGLE_CREDENTIALS_PATH: ${GOOGLE_CREDENTIALS_PATH}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID}
+      PYTHONPATH: /app
+    env_file:
+      - .env
+    volumes:
+      - .:/app 
+      - staticfiles_data:/static/
+
+  worker:
+    build: .
+    container_name: whatsapp-worker
+    depends_on:
+      - redis
+      - django-web
+      - waha
+      - go-gateway
+    ports:
+      - "9091:9091"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      PYTHONPATH: /app
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    command: python workers/whatsapp_worker.py
+  
+  reminder-worker:
+    build: . # Assume que usa o mesmo Dockerfile base
+    container_name: reminder_worker_service
+    depends_on:
+      - db
+      - redis # O lembrete usa o Redis (DB 1)
+    environment:
+      # Inclua variáveis de ambiente necessárias para o Google Calendar
+      GOOGLE_CREDENTIALS_PATH: ${GOOGLE_CREDENTIALS_PATH}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID}
+    env_file:
+      - .env
+    command: python -m workers.lembretes.lembrets # <--- COMANDO CORRETO
+    # Se você tem um diretório 'workers/lembretes' para o lembrets.py
+
+  waha:
+    container_name: waha
+    image: devlikeapro/waha:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_API_KEY=${WAHA_API_KEY}
+      - WAHA_SESSION_CONFIG_IGNORE_STATUS=true
+      - WAHA_SESSION_CONFIG_IGNORE_GROUPS=true
+      - WAHA_SESSION_CONFIG_IGNORE_CHANNELS=true
+      - WAHA_SESSION_CONFIG_IGNORE_BROADCAST=true
+      - WHATSAPP_HOOK_HMAC_KEY=${WEBHOOK_HMAC_SECRET}
+      - WHATSAPP_HOOK_URL=${WHATSAPP_HOOK_URL}
+    volumes:
+      - waha_data:/app/.sessions
+    env_file:
+      - .env
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    command: redis-server --port 6379 --appendonly yes
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis:/data
+    healthcheck: # Verifica se o Redis está respondendo ao comando PING
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: nginx-reverse-proxy
+    depends_on:
+      - go-gateway
+      - django-web 
+    ports:
+      - "8000:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - staticfiles_data:/var/www/staticfiles_dist:ro
+  
+
+volumes:
+  postgres_data:
+  redis:
+  waha_data:
+  staticfiles_data:

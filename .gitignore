@@ -1,0 +1,22 @@
+# Virtual Environment
+.venv/
+
+# WhatsApp Sessions  
+waha_sessions/
+
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# System
+.dockerignore
+
+
+*.pyc
+staticfiles_dist/
+
+google-credentials.json
