@@ -55,3 +55,5 @@ google-auth
 google-api-python-client
 fastapi
 djangorestframework
+
+celery

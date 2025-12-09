@@ -13,6 +13,40 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 import os
 
+from celery.schedules import crontab 
+
+# --- CELERY CONFIGURATION ---
+REDIS_HOST = os.environ.get('REDIS_HOST', 'redis')
+REDIS_PORT = os.environ.get('REDIS_PORT', 6379)
+# Pega o DB 2 do .env (ou usa 2 como fallback)
+CELERY_REDIS_DB = os.environ.get('CELERY_REDIS_DB', 2) 
+
+# Celery Broker/Backend (Aponta para o DB 2)
+CELERY_BROKER_URL = f'redis://{REDIS_HOST}:{REDIS_PORT}/{CELERY_REDIS_DB}'
+CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+
+CELERY_TIMEZONE = 'America/Sao_Paulo' # Ajuste para seu fuso horário
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+
+# --- CELERY BEAT (AGENDAMENTO EFICIENTE) ---
+CELERY_BEAT_SCHEDULE = {
+    # TAREFA 1: Envio de Lembretes (I/O Bound)
+    'send-reminders-hourly-business': {
+        'task': 'send_scheduled_reminders', 
+        # Roda no minuto 0 (topo da hora), das 6h até 20h.
+        'schedule': crontab(minute=0, hour='6-20'), 
+    },
+
+    # TAREFA 2: Limpeza do DB (DB Bound) - Usa Management Command
+    'cleanup-expired-appointments-daily': {
+        'task': 'django.core.management.call_command',
+        'args': ['cleanup_expired_appointments'], 
+        # Roda uma vez por dia, fora do horário de pico (ex: 3h da manhã).
+        'schedule': crontab(hour=3, minute=0), 
+    }
+}
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 

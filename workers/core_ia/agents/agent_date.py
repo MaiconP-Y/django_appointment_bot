@@ -336,6 +336,8 @@ Qual destes horários você gostaria de agendar? (Ex: 'Quero dia 04/12 às 10:00
                                     status='failed',
                                     detalhes=f"Falha: BaaS negou o agendamento. Evento GCal {gcal_event_id} cancelado. Motivo: {error_message}"
                                 )
+                                delete_session_state(chat_id)
+                                delete_history(chat_id)
 
                                 # ✅ Retorna a mensagem correta do BaaS para o usuário.
                                 return f"{REROUTE_COMPLETED_STATUS}|{error_message}"

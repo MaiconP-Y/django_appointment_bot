@@ -78,20 +78,32 @@ services:
     restart: unless-stopped
     command: python workers/whatsapp_worker.py
   
-  reminder-worker:
-    build: . # Assume que usa o mesmo Dockerfile base
-    container_name: reminder_worker_service
-    depends_on:
-      - db
-      - redis # O lembrete usa o Redis (DB 1)
-    environment:
-      # Inclua variáveis de ambiente necessárias para o Google Calendar
-      GOOGLE_CREDENTIALS_PATH: ${GOOGLE_CREDENTIALS_PATH}
-      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID}
+  celery-worker:
+    build: . # Usa o Dockerfile
+    container_name: celery-worker
+    # Comando Go-like: executa apenas o que for solicitado
+    command: celery -A chatbot worker -l info 
+    volumes:
+      - .:/usr/src/app
     env_file:
       - .env
-    command: python -m workers.lembretes.lembrets # <--- COMANDO CORRETO
-    # Se você tem um diretório 'workers/lembretes' para o lembrets.py
+    depends_on:
+      - redis
+      - django-web 
+
+  # NOVO SERVIÇO: CELERY BEAT (O AGENDADOR PRECISO)
+  celery-beat:
+    build: . # Usa o Dockerfile
+    container_name: celery-beat
+    # Comando Celery Beat: lê o settings.py e emite o sinal para o worker
+    command: celery -A chatbot beat -l info
+    volumes:
+      - .:/usr/src/app 
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - django-web
 
   waha:
     container_name: waha
