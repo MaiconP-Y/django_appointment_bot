@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time" // Necessário para o timeout do Redis assíncrono
+	"time" 
 
 	"go_waha_gateway/services/hmac"
 	"go_waha_gateway/services/redis"
@@ -19,6 +19,7 @@ var ctx = context.Background()
 const MAX_BODY_SIZE int64 = 1048576 
 
 func main() {
+    // ... (Código existente de inicialização do HMAC e Redis) ...
 	// 1. Inicializa o Serviço HMAC
 	if err := hmac.InitSecret(); err != nil {
 		log.Fatalf("❌ Falha crítica ao carregar a chave HMAC: %v", err)
@@ -44,36 +45,20 @@ func main() {
 	}
 }
 
-// Handler Principal do Webhook
+
 func webhookHandler(w http.ResponseWriter, r *http.Request) {
-	// Rejeita qualquer coisa que não seja POST
-	if r.Method != http.MethodPost {
-		http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-		return
-	}
-	
-	// CRÍTICO: DEFER IMEDIATO. Garante que r.Body.Close() será chamado.
-	defer r.Body.Close()
-
-	// PASSO 1: LER o corpo da requisição BRUTO (RAW BODY) com limite
-    limitedReader := io.LimitReader(r.Body, MAX_BODY_SIZE)
-	rawBody, err := io.ReadAll(limitedReader)
-
-	// Trata erro de leitura ou limite excedido
+    
+    // PASSO 1: Leitura do Body e limite
+	r.Body = http.MaxBytesReader(w, r.Body, MAX_BODY_SIZE)
+	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("❌ Erro ao ler body da requisição: %v", err)
-		http.Error(w, "Erro ao ler body", http.StatusInternalServerError)
+		log.Printf("❌ Erro ao ler body do request ou limite excedido: %v", err)
+		// Envia um status 400 se o corpo for inválido ou muito grande
+		http.Error(w, "Bad Request: Invalid body or size limit exceeded", http.StatusBadRequest) 
 		return
 	}
     
-    // VERIFICAÇÃO DE LIMITE EM PROFUNDIDADE (Fallback)
-    if r.ContentLength > MAX_BODY_SIZE || (r.ContentLength == -1 && len(rawBody) == int(MAX_BODY_SIZE)) {
-        log.Println("❌ Requisição recusada: Tamanho do corpo excedeu o limite máximo (1MB).")
-        http.Error(w, "Payload Too Large", http.StatusRequestEntityTooLarge)
-        return
-    }
-
-	// PASSO 2: Validação HMAC (SEGURANÇA EXTREMA)
+    // PASSO 2: Validação HMAC (SEGURANÇA EXTREMA)
 	hmacHeader := r.Header.Get("X-Webhook-Hmac")
 
 	if hmacHeader == "" || !hmac.ValidateHmac(rawBody, hmacHeader) {
@@ -82,27 +67,45 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// PASSO 3: Responde HTTP 200 OK IMEDIATAMENTE
-	// Se chegou até aqui, a requisição é válida. Responda imediatamente para latência mínima.
+	// PASSO 3: Responde HTTP 200 OK IMEDIATAMENTE (SUCESSO DA LATÊNCIA BAIXA)
 	w.WriteHeader(http.StatusOK)
 	log.Println("✨ Webhook processado com sucesso! Resposta HTTP 200 enviada.")
 
-	// PASSO 4: PUBLICAR no Redis - AGORA ASSÍNCRONO COM GOROUTINE
-	// Delega o I/O de rede do Redis para uma rotina em background.
+	// =========================================================================
+	// === PASSO 4: PUBLICAR no Redis - AGORA COM CHECK DE IDEMPOTÊNCIA ===
+	// =========================================================================
 	go func(payload []byte) {
-        // Usa um contexto de curta duração para o Redis para evitar bloqueio infinito (Timeout).
-        // Não usamos r.Context() pois a goroutine principal já retornou (a requisição HTTP terminou).
+		// Contexto de curta duração para o Redis (5s)
 		ctxRedis, cancel := context.WithTimeout(context.Background(), 5*time.Second) 
-		defer cancel() // Libera o recurso do Context
+		defer cancel() 
 
-		if err := redis.PublishMessage(ctxRedis, payload); err != nil {
-			// Apenas loga o erro. O cliente já recebeu o 200 OK.
-			log.Printf("❌ ERRO ASSÍNCRONO CRÍTICO: Falha ao publicar no Redis: %v", err)
+        // 4.1. Tentar extrair o ID (NOVO)
+		eventID, err := redis.ExtractEventID(payload)
+
+		if err != nil {
+            // Se falhar a extração do ID (ex: notificação de status/leitura), 
+            // logamos e pulamos a checagem de duplicata.
+			log.Printf("⚠️ ID de evento não encontrado/inválido. Publicando sem checagem de duplicata: %v", err)
+            // Continua para o passo 4.3 (Publicação)
 		} else {
-            // Log de sucesso opcional (remova para alto volume)
-			log.Printf("✅ Publicação no Redis FINALIZADA em BACKGROUND.")
-		}
-	}(rawBody) // Passa o payload lido para a Goroutine
+            // 4.2. Checar e Registrar Idempotência no Redis (NOVO)
+			isDuplicate, err := redis.CheckAndSetIdempotency(ctxRedis, eventID)
 
-	// O handler retorna imediatamente após iniciar a goroutine.
+			if err != nil {
+                // Erro de Redis (falha de infra). Publicamos para não perder a mensagem.
+				log.Printf("❌ ERRO Redis CRÍTICO (Idempotência). Publicando Evento: %v", err)
+			} else if isDuplicate {
+                // 4.2.1: DUPLICATA ENCONTRADA E DESCARTADA (O CORAÇÃO DA OTIMIZAÇÃO)
+				log.Printf("❌ DUPLICATA DESCARTADA pelo Gateway Go. ID: %s", eventID)
+				return // **SAI DA GOROUTINE.** O payload NÃO é publicado.
+			}
+            log.Printf("✅ Evento ÚNICO aceito pelo Gateway. ID: %s", eventID)
+            // Continua para o passo 4.3 (Publicação)
+		}
+
+		// 4.3: Publicação na Fila (Somente se não for descartado)
+		if err := redis.PublishMessage(ctxRedis, payload); err != nil {
+			log.Printf("❌ ERRO ASSÍNCRONO CRÍTICO: Falha ao publicar no Redis: %v", err)
+		}
+	}(rawBody)
 }

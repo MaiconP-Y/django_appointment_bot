@@ -1,6 +1,7 @@
 import redis
 import logging
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -9,6 +10,40 @@ _redis_client = None
 REDIS_HOST = os.environ.get('REDIS_HOST', 'redis') # 'redis' é o nome do service no docker-compose
 REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
 REDIS_DB = int(os.environ.get('REDIS_DB', 0))
+# ----------------------------------------------------
+# --- NOVAS CONSTANTES ---
+# ----------------------------------------------------
+USER_PROFILE_CACHE_TTL = 60 * 180
+USER_PROFILE_CACHE_PREFIX = "cache:user_profile:"
+
+def get_user_profile_cache(chat_id: str) -> dict | None:
+    """Busca o perfil de usuário do cache Redis."""
+    key = USER_PROFILE_CACHE_PREFIX + chat_id
+    
+    try:
+        cached_data = get_redis_client().get(key)
+        if cached_data:
+            # Deserializa o JSON de volta para um dicionário Python
+            return json.loads(cached_data) 
+    except Exception as e:
+        logger.error(f"❌ Falha ao buscar cache para {chat_id}: {e}")
+        # Em caso de erro, apenas retorna None e deixa o fluxo ir para o DB
+        return None 
+    
+    return None
+
+def set_user_profile_cache(chat_id: str, data: dict):
+    """Salva o perfil de usuário no cache Redis com um TTL."""
+    key = USER_PROFILE_CACHE_PREFIX + chat_id
+    
+    try:
+        # Serializa o dicionário para uma string JSON antes de salvar no Redis
+        serialized_data = json.dumps(data) 
+        # Define a chave, o valor e o TTL
+        get_redis_client().set(key, serialized_data, ex=USER_PROFILE_CACHE_TTL)
+    except Exception as e:
+        # Erros no cache não devem parar a aplicação, apenas logamos.
+        logger.warning(f"⚠️ Falha ao salvar cache para {chat_id}: {e}")
 
 def get_redis_client():
     """

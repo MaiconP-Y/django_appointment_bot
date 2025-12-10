@@ -1,4 +1,4 @@
-from services.redis_client import update_session_state
+from services.redis_client import update_session_state, get_user_profile_cache, set_user_profile_cache
 
 from core_ia.agents.agent_register import Agent_register
 from core_ia.agents.agent_date import Agent_date
@@ -16,23 +16,33 @@ MENSAGEM_ERRO_SUPORTE = "Desculpe, ocorreu um erro técnico inesperado no nosso 
 
 def get_user_name_from_db(chat_id: str) -> str | None:
     """
-    Busca o nome do usuário no BaaS via chamada HTTP (Substitui o ORM).
+    Busca o nome do usuário no BaaS, utilizando o Redis Cache como primeira linha.
     """
+    
+    # 1. TENTAR LER DO CACHE REDIS (Busca o valor que agora tem TTL de 24h)
+    cached_user_data = get_user_profile_cache(chat_id)
+    
+    if cached_user_data:
+        logger.info(f"✅ User data para {chat_id} ENCONTRADO no Redis Cache (TTL de 24h).")
+        return cached_user_data.get('username')
+
+    # 2. SE NÃO ESTIVER NO CACHE, BUSCAR NO DJANGO
+    logger.info(f"⏳ User data para {chat_id} não encontrado no cache. Buscando via HTTP...")
+    
     try:
-        # ❌ REMOVIDO: from chatbot_api.models import UserRegister
-        # ❌ REMOVIDO: user = UserRegister.objects.get(chat_id=chat_id)
-        
         user_data = DjangoApiService.get_user_data(chat_id)
         
         if user_data and user_data.get('status') == 'SUCCESS':
-            # Retorna o nome do usuário obtido via HTTP
+            # 3. SALVAR NO CACHE (Aplica o TTL de 24h)
+            set_user_profile_cache(chat_id, user_data)
+            logger.info(f"💾 User data de {chat_id} salvo no cache com TTL de 3h.")
+            
             return user_data.get('username')
         
-        return None # Usuário não encontrado (404) ou erro de API
+        return None 
 
     except Exception as e:
-        # Se falhar a chamada HTTP, é tratado como erro no BaaS/infra.
-        logger.error(f"❌ Erro HTTP ao buscar o nome do usuário {chat_id}: {e}")
+        logger.error(f"❌ Erro CRÍTICO HTTP ao buscar dados de user para {chat_id}: {e}", exc_info=True)
         return None
 
 class agent_service(): 
@@ -75,9 +85,7 @@ class agent_service():
                     return response
                         
                 else: 
-                    # Cai aqui se step_decode é None (nova conversa, ou reset forçado)
-                    response = self.router_agent.route_intent(history_str, user_name)
-                    
+                    response = self.router_agent.route_intent(history_str)
                     if response == 'ativar_agent_atendimento_humano':
                         update_session_state(chat_id, registration_step='HUMANE_SERVICE')
                         return "Ok, solicitação detectada com sucesso. Um de nossos agentes entrará em contato com você em breve. A partir de agora, nosso bot LLM não processará mais suas mensagens."

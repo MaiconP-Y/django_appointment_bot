@@ -12,7 +12,7 @@ class Agent_router():
         except Exception as e:
             raise EnvironmentError("A variável GROQ_API_KEY não está configurada.") from e
     
-    def route_intent(self, message: str, user_name: str) -> str:
+    def route_intent(self, message: str) -> str:
         """
         Gera uma resposta simples da IA para uma única mensagem do usuário, ou retorna a função a ser chamada.
         
@@ -23,7 +23,7 @@ class Agent_router():
         mensagens = [
             {
                 "role": "system",
-                "content": f"O NOME COMPLETO do usuário é: {user_name}. {prompt_router}",
+                "content": prompt_router,
             },
             {
                 "role": "user",
