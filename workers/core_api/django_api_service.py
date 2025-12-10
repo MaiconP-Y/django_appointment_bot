@@ -97,3 +97,17 @@ class DjangoApiService:
             # Retorna falha, mas o agente geralmente ignora em casos de métrica
             return {"status": "HTTP_FAILURE", "message": f"Falha de comunicação: {e}"}
             
+    @staticmethod
+    def cleanup_expired_appointments() -> Dict:
+        """
+        Chama o endpoint de limpeza agendada no BaaS.
+        """
+        url = f"{DJANGO_BAAS_URL}cleanup/" # Assumindo que você usou o URL /api/v1/cleanup/
+        try:
+            # Tarefa de background pode ter um timeout maior
+            response = requests.post(url, headers=AUTH_HEADERS, timeout=30) 
+            response.raise_for_status() 
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Falha HTTP CRÍTICA ao chamar limpeza de DB: {e}") 
+            return {"status": "HTTP_FAILURE", "message": "Falha de comunicação com o BaaS durante limpeza."}

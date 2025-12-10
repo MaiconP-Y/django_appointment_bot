@@ -50,11 +50,13 @@ services:
       GOOGLE_CREDENTIALS_PATH: ${GOOGLE_CREDENTIALS_PATH}
       GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID}
       PYTHONPATH: /app
+
+    command: /bin/sh -c "python manage.py collectstatic --noinput && /usr/local/bin/uvicorn chatbot.asgi:application --host 0.0.0.0 --port 8000"
     env_file:
       - .env
     volumes:
       - .:/app 
-      - staticfiles_data:/static/
+      - staticfiles_volume:/app/staticfiles_dist
 
   worker:
     build: .
@@ -149,12 +151,13 @@ services:
     ports:
       - "8000:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - staticfiles_data:/var/www/staticfiles_dist:ro
+      # CRÍTICO: Mapeia o volume de estáticos para o local que o nginx.conf espera!
+      - staticfiles_volume:/var/www/staticfiles_dist/ 
+      - ./nginx.conf:/etc/nginx/nginx.conf
   
 
 volumes:
   postgres_data:
   redis:
   waha_data:
-  staticfiles_data:
+  staticfiles_volume: # Novo volume compartilhado
