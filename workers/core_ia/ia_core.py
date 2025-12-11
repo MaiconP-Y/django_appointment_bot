@@ -10,7 +10,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# 🎯 NOVO SINAL GLOBAL
 REROUTE_SIGNAL = "__FORCE_ROUTE_INTENT__" 
 MENSAGEM_ERRO_SUPORTE = "Desculpe, ocorreu um erro técnico inesperado no nosso sistema de IA. Por favor, entre em contato diretamente com nosso suporte."
 
@@ -32,10 +31,9 @@ class agent_service():
         """
         try:
             user_name = get_user_name_from_db(chat_id)
-            if reroute_signal == REROUTE_SIGNAL: # Para o tool_reset indicar sem estado, força o estado para nova detecção de intenção
+            if reroute_signal == REROUTE_SIGNAL:
                 step_decode = None
             
-            # Lógica HUMANE_SERVICE mantida no escopo original:
             if step_decode == 'HUMANE_SERVICE':
                 
                 return "Ok, solicitação detectada com sucesso. Um de nossos agentes entrará em contato com você em breve. A partir de agora, nosso bot LLM não processará mais suas mensagens."
@@ -43,8 +41,6 @@ class agent_service():
             response = ""
             
             if user_name:
-                
-                # A lógica abaixo usa a variável 'step_decode' (que agora é None se houver re-route)
                 if step_decode: 
                     if step_decode in ['AGENT_DATE_SEARCH', 'AGENT_DATE_CONFIRM']:
                         response = self.date_agent.generate_date(step_decode, history_str, chat_id, user_name)
@@ -59,9 +55,7 @@ class agent_service():
                         update_session_state(chat_id, registration_step='HUMANE_SERVICE')
                         return "Ok, solicitação detectada com sucesso. Um de nossos agentes entrará em contato com você em breve. A partir de agora, nosso bot LLM não processará mais suas mensagens."
                     if response == 'ativar_agent_marc':
-                        # 🎯 NOVO ESTADO INICIAL: Começa na busca
                         update_session_state(chat_id, registration_step='AGENT_DATE_SEARCH')
-                        # Passa o estado inicial para o agente
                         response = self.date_agent.generate_date('AGENT_DATE_SEARCH', history_str, chat_id, user_name)
                         
                     elif response == 'ativar_agent_ver_cancel':
@@ -76,18 +70,14 @@ class agent_service():
             return response
             
         except Exception as e:
-            # 🎯 TRATAMENTO DE ERRO CRÍTICO (FALHA NA GROQ OU NOS AGENTES)
             logger.error(f"Erro CRÍTICO no serviço de IA para chat_id {chat_id}: {e}", exc_info=True)
             from services.waha_api import Waha
             try:
-                # 1. Envia a mensagem amigável
                 waha_service = Waha() 
                 waha_service.send_support_contact(chat_id)
                 
             except Exception as waha_e:
                 logger.error(f"Falha ao enviar mensagem de suporte via WAHA: {waha_e}")
-            
-            # 3. Retorna um sinal REROUTE_COMPLETED vazio/curto para notificar o Worker
-            # que a resposta já foi enviada e o processamento deve ser finalizado.
+
             from core_ia.services_agents.tool_reset import REROUTE_COMPLETED_STATUS
             return f"{REROUTE_COMPLETED_STATUS}|{MENSAGEM_ERRO_SUPORTE}"

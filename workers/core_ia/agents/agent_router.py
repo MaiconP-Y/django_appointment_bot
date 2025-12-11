@@ -1,8 +1,9 @@
 import os
 from groq import Groq
 from core_ia.services_agents.prompts_agents import prompt_router
-
+import logging
 groq_service = Groq()
+logger = logging.getLogger(__name__)
 
 class Agent_router():
     def __init__(self):
@@ -40,5 +41,5 @@ class Agent_router():
             return chat_completion.choices[0].message.content
             
         except Exception as e:
-            print(f"Erro ao chamar a API da Groq: {e}")
-            return "Desculpe, estou tendo problemas técnicos para responder agora."
+            logger.error(f"Erro CRÍTICO no Agent_router (Groq): {e}", exc_info=True)
+            raise

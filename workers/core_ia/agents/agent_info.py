@@ -2,6 +2,9 @@ import os
 from groq import Groq
 from core_ia.services_agents.prompts_agents import prompt_info
 from services.service_api_calendar import ServicesCalendar
+import logging 
+
+logger = logging.getLogger(__name__) 
 
 
 groq_service = Groq()
@@ -47,5 +50,6 @@ class Agent_info():
             return resposta_ia
             
         except Exception as e:
-            print(f"Erro ao chamar a API da Groq: {e}")
-            return "Desculpe, estou tendo problemas técnicos para responder agora."
+            logger.error(f"Erro CRÍTICO no Agent_info (Groq): {e}", exc_info=True)
+
+            raise 

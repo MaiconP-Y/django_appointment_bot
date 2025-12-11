@@ -72,33 +72,24 @@ class WhatsAppWorker:
                 logger.info(f"Tipo de mensagem '{message_type}' detectado e rejeitado para {chat_id}. Worker finalizado.")
                 return
             
-            # 1. 🎯 BUSCA DE ESTADO (I/O) - Responsabilidade do Worker
             session_data = get_session_state(chat_id)
             step_bytes = session_data.get(b'registration_step') 
             active_step_decode = step_bytes.decode('utf-8') if step_bytes else None
             if active_step_decode == 'HUMANE_SERVICE':
                 return
-            # 2. ATUALIZAÇÃO DE HISTÓRICO
-            add_message_to_history(chat_id, "User", message_text) # Adiciona a nova mensagem
-            
-            # 3. BUSCA O HISTÓRICO FINAL, INCLUINDO A MENSAGEM ACABADA DE ADICIONAR
+            add_message_to_history(chat_id, "User", message_text)
+
             history = get_recent_history(chat_id, limit=10)
             history_str = "\n".join(history)
             logger.info(f"Contexto final para o LLM:\n{history_str}")
             
-            self.service_waha.start_typing(chat_id) 
-            
-            # 4. 🎯 CHAMADA ÚNICA AO AGENTE LLM (Router)
+            self.service_waha.start_typing(chat_id)
             try:
-                # O router agora recebe o contexto COMPLETO e o estado ATIVO
                 response = self.service_agent.router(history_str, chat_id, step_decode=active_step_decode) 
             finally:
                 self.service_waha.stop_typing(chat_id)
 
-            # Define a mensagem de ativação (retornada pelo ia_core.py) para evitar salvá-la repetidamente
             ACTIVATION_MESSAGE = "Ok, solicitação detectada com sucesso. Um de nossos agentes entrará em contato com você em breve. A partir de agora, nosso bot LLM não processará mais suas mensagens."
-            
-            # ❌ TRECHO REMOVIDO: (A responsabilidade de não retornar string vazia é do ia_core.router)
 
             if response.strip().startswith(REROUTE_COMPLETED_STATUS):
                 _, final_bot_response = response.split('|', 1) 
@@ -108,20 +99,12 @@ class WhatsAppWorker:
                 return
             
             if response == ACTIVATION_MESSAGE:
-                # 1. ENVIAR A MENSAGEM (Obrigatório)
                 self.service_waha.send_whatsapp_message(chat_id, response) 
-                
-                # 2. DELETAR O HISTÓRICO (Garante limpeza imediata)
                 delete_history(chat_id) 
-                
-                # 3. SAÍDA IMEDIATA (Evita que o bloco final 'Histórico Bot SALVO' seja executado)
                 logger.info(f"Handover para {chat_id} COMPLETO. Histórico DELETADO e ciclo de Worker finalizado.")
                 return
-                
-            # Para todas as outras respostas normais
-            self.service_waha.send_whatsapp_message(chat_id, response)
-            
 
+            self.service_waha.send_whatsapp_message(chat_id, response)
             add_message_to_history(chat_id, "Bot", response)
             logger.info(f"Processamento para {chat_id} BEM-SUCEDIDO. Histórico Bot SALVO.")
             
@@ -133,13 +116,11 @@ class WhatsAppWorker:
                 self.service_waha.send_whatsapp_message(chat_id, MENSAGEM_ERRO_FATAL)
                 self.service_waha.send_support_contact(chat_id)
             except Exception as waha_e:
-                # Este log é crucial se o erro estiver na própria API do WhatsApp
                 logger.error(f"Falha ao enviar mensagem de suporte via WAHA: {waha_e}")
-                
-            # A lógica de reenfileiramento deve ser mantida, pois o erro foi de infra
+
             self.redis_client.rpush(QUEUE_NAME, raw_json_payload)
             logger.warning(f"♻️ Mensagem {message_id} re-enfileirada para reprocessamento.")
-            raise # Re-levanta a exceção para que o Worker registre a falha no log de infra.
+            raise 
 
     def listen_queue(self):
         queue_name = QUEUE_NAME

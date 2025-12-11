@@ -2,8 +2,8 @@ import os
 import datetime
 from datetime import datetime, timedelta, timezone
 import logging
+logger = logging.getLogger(__name__)
 
-# --- IMPORTAÇÕES NECESSÁRIAS PARA O GOOGLE API ---
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -15,17 +15,11 @@ except ImportError:
     def build(): pass
 
 BR_TIMEZONE = timezone(timedelta(hours=-3))
-logging.basicConfig(level=logging.INFO)
 
-# --- CONFIGURAÇÃO DO GOOGLE CALENDAR ---
 GOOGLE_CALENDAR_ID = os.environ.get('GOOGLE_CALENDAR_ID', 'maiconwantuil@gmail.com')
 CALENDAR_SCOPE = ['https://www.googleapis.com/auth/calendar'] 
 GOOGLE_CREDENTIALS_PATH = os.environ.get('GOOGLE_CREDENTIALS_PATH', 'caminho/para/o/seu-arquivo-de-credenciais.json')
 calendar_id = GOOGLE_CALENDAR_ID 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# VALIDAÇÃO E UTILITÁRIOS (NÍVEL GLOBAL)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class ToolException(Exception):
     """Exceção customizada para erros de ferramenta."""
@@ -52,8 +46,6 @@ def validar_data_nao_passada(data_str: str) -> dict:
     """
     try:
         data_consulta = datetime.strptime(data_str, "%d/%m/%Y").date()
-        # Assumindo BR_TIMEZONE foi definido no escopo global
-        # Mantenha o código original para timezone
         hoje = datetime.now(timezone(timedelta(hours=-3))).date() 
         
         if data_consulta < hoje:
@@ -62,12 +54,7 @@ def validar_data_nao_passada(data_str: str) -> dict:
         return {"status": "SUCCESS", "message": "Dia é válido."}
     except ValueError:
         return {"status": "ERROR", "message": "Formato de data inválido. Use DD/MM/AAAA."}
-    
-# ... (O restante da classe ServicesCalendar deve garantir que exibir_proximos_horarios_flex e outras funções também retornem DICTs de status.)
 
-def validar_dia(data_formatada: str) -> str | None:
-    """Função mock para simular a validação se o dia é útil/válido (ex: não é feriado)."""
-    return None
 
 def gerar_horarios_disponiveis() -> list:
     """
@@ -102,15 +89,11 @@ def is_slot_busy(slot_time_str: str, busy_blocks: list, data: str, duration_minu
             
     return False
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ESTRATÉGIA COMBINADA (NOVO FLUXO)
-# ═══════════════════════════════════════════════════════════════════════════════
-
 def buscar_disponibilidade_escalonada(
     service, 
     limite_slots: int = 3, 
     duracao_minutos: int = 60,
-    margens_dias: list[int] = None # As margens de busca (ex: [4, 10, 30])
+    margens_dias: list[int] = None
 ) -> dict:
     """
     Busca os próximos slots livres usando a estratégia escalonada (4->10->30 dias),
@@ -120,30 +103,19 @@ def buscar_disponibilidade_escalonada(
     """
     if not service:
         return {"status": "ERROR", "message": "Erro: Objeto de serviço do Google Calendar não inicializado."}
-        
-    # 1. Definição das margens de busca padrão (4, 10, 30 dias)
     if margens_dias is None:
         margens_dias = [4, 10, 30] 
         
     hoje = datetime.now(BR_TIMEZONE).date()
     slots_sugeridos = []
-    
-    # 2. Loop sobre as margens (Ex: 4 dias, depois 10, depois 30)
     for margem in margens_dias:
         logging.info(f"Iniciando busca flexível: Margem de +{margem} dias (sem domingos).")
-        
-        # 3. Itera dia por dia dentro da margem
         for i in range(margem):
             data_atual = hoje + timedelta(days=i)
-            
-            # ⚠️ CHECK (Go Way): Ignorar Domingo
             if data_atual.weekday() == 6: 
                 logging.debug(f"⏭️ Pulando {data_atual.strftime('%Y-%m-%d')} - É Domingo.")
-                continue # Pula este dia e vai para a próxima iteração
-                
+                continue       
             data_str = data_atual.strftime("%Y-%m-%d")
-            
-            # --- CHAMA O MÉTODO SRP DA CLASSE (COESO) ---
             resultado = ServicesCalendar.buscar_horarios_disponiveis(
                 service=service, 
                 data=data_str, 
@@ -152,29 +124,20 @@ def buscar_disponibilidade_escalonada(
             
             if resultado['status'] == 'SUCCESS':
                 for hora in resultado['available_slots']:
-                    # Constrói o formato ISO 8601 completo
                     data_hora_iso = f"{data_str}T{hora}:00-03:00"
-                    
-                    # Constrói a descrição legível
                     data_hr_obj = datetime.strptime(f"{data_str} {hora}", "%Y-%m-%d %H:%M")
                     data_hr_legivel = data_hr_obj.strftime("%d/%m - %H:%M")
-                    
                     slots_sugeridos.append({
                         'iso_time': data_hora_iso,
                         'legivel': data_hr_legivel
                     })
-                    
-                    # Curto-circuito: Eficiência de performance (Go way!)
                     if len(slots_sugeridos) >= limite_slots:
                         logging.info(f"Limite de {limite_slots} slots atingido na margem de {margem} dias.")
                         return {
                             "status": "SUCCESS", 
                             "available_slots": slots_sugeridos
                         }
-                        
-        # Se o loop de dias da margem terminar, ele passa para a próxima margem (4 -> 10 -> 30)
 
-    # 4. Retorno final
     if slots_sugeridos:
         return {"status": "SUCCESS", "available_slots": slots_sugeridos}
     else:
@@ -238,15 +201,12 @@ class ServicesCalendar:
         except Exception as e:
             return []
 
-    # 💡 MÉTODO DE BUSCA DIÁRIA (FREEBUSY) - ESSENCIAL PARA SRP
     @staticmethod
     def buscar_horarios_disponiveis(service, data: str, duracao_minutos: int = 60):
         """
         Calcula os horários disponíveis (livres) usando o endpoint freebusy do Google. 
         """
         try:
-            
-            # 1. Validação de data
             try:
                 data_date_obj = datetime.strptime(data, "%Y-%m-%d").date()
             except ValueError:
@@ -254,24 +214,15 @@ class ServicesCalendar:
 
             time_min = f'{data}T07:00:00-03:00'
             time_max = f'{data}T20:00:00-03:00'
-            
-            # 3. CHAMADA AO FREEBUSY
             query_body = {
                 "timeMin": time_min,
                 "timeMax": time_max,
                 "items": [{"id": calendar_id}]
             }
-
             freebusy_response = service.freebusy().query(body=query_body).execute()
-            
-            # 4. Extrai os blocos ocupados
             busy_blocks = freebusy_response.get('calendars', {}).get(calendar_id, {}).get('busy', [])
-            
-            # 5. Gera todos os slots possíveis e filtra
             horarios = gerar_horarios_disponiveis() 
             livres = []
-            
-            # --- Safety Margin (30 minutos) ---
             hoje = datetime.now(BR_TIMEZONE).date()
             now_with_margin = datetime.now(BR_TIMEZONE) + timedelta(minutes=30)
             past_margin_passed = False 
@@ -286,21 +237,16 @@ class ServicesCalendar:
                             continue 
 
                         slot_dt = datetime.strptime(f"{data}T{h}:00", "%Y-%m-%dT%H:%M:%S").replace(tzinfo=BR_TIMEZONE)
-                        
-                        # ⚠️ VALIDAÇÃO 2 (Safety Margin)
                         if slot_dt >= now_with_margin:
                             livres.append(h)
                             past_margin_passed = True 
                     
                     else:
-                        # Para datas futuras
                         livres.append(h)
-
 
             if not livres:
                 return {"status": "SUCCESS", "available_slots": [], "message": f"Não há horários disponíveis para {data}. "}
 
-            # Retorno estruturado de sucesso
             return {"status": "SUCCESS", "available_slots": livres}
             
         except ToolException as e:
@@ -331,14 +277,9 @@ class ServicesCalendar:
             start_dt = datetime.fromisoformat(start_time_str)
         except ValueError:
             return {"status": "ERROR", "message": f"Formato inválido para start_time_str: '{start_time_str}'. Use o formato ISO 8601 completo."}
-            
-        # ═══════════════════════════════════════════════════════════════════════════
-        # 🛡️ VERIFICAÇÃO DE DISPONIBILIDADE DE ÚLTIMO SEGUNDO
-        # ═══════════════════════════════════════════════════════════════════════════
+
         data_str = start_dt.strftime("%Y-%m-%d")
         hora_str = start_dt.strftime("%H:%M")
-
-        # Chama o próprio método da classe (SRP)
         disponiveis = ServicesCalendar.buscar_horarios_disponiveis(
             service=service, 
             data=data_str, 
@@ -351,12 +292,8 @@ class ServicesCalendar:
                 "status": "ERROR", 
                 "message": f"❌ O horário {hora_str} do dia {start_dt.strftime('%d/%m/%Y')} não está mais disponível."
             }
-            
-        logging.info(f"✅ Slot {start_time_str} confirmado como disponível.")
         
-        # ═══════════════════════════════════════════════════════════════════════════
-        # AGENDAMENTO
-        # ═══════════════════════════════════════════════════════════════════════════
+        logging.info(f"✅ Slot {start_time_str} confirmado como disponível.")
         DURACAO_MINUTOS = 60
         end_dt = start_dt + timedelta(minutes=DURACAO_MINUTOS)
         end_time_str = end_dt.isoformat()
@@ -430,10 +367,64 @@ class ServicesCalendar:
         """
         if not service:
             return {"status": "ERROR", "message": "Erro: Objeto de serviço do Google Calendar não inicializado."}
-
-        # 🚀 CHAMA A FUNÇÃO DE ESTRATÉGIA EXTERNA (CORRETO)
         return buscar_disponibilidade_escalonada(
             service=service, 
             limite_slots=limite_slots, 
             duracao_minutos=duracao_minutos
         )
+    @staticmethod
+    def exibir_proximos_horarios_flex(service ,chat_id: str) -> str:
+        """
+        Tool: Busca 11 slots disponíveis usando a estratégia escalonada (4->10->30 dias).
+        Formata e retorna a lista legível para o usuário.
+        """
+        resultado_tool = ServicesCalendar.buscar_proximos_disponiveis(
+            service=service, 
+            limite_slots=11, 
+            duracao_minutos=60 
+        )
+        try:
+            if resultado_tool.get("status") == "SUCCESS":
+                slots_encontrados = resultado_tool.get("available_slots", [])
+                
+                if not slots_encontrados:
+                    return (
+                        f"❌ Nossos horários estão lotados nas próximas quatro semanas. "
+                        f"Tente novamente em alguns dias."
+                    )
+                else:            
+                    slots_agrupados = {}
+                    for slot in slots_encontrados:
+                        parts = slot['legivel'].split(' - ')
+                        if len(parts) == 2:
+                            data_parte = parts[0] 
+                            hora_parte = parts[1] 
+                            if data_parte not in slots_agrupados:
+                                slots_agrupados[data_parte] = []
+                            slots_agrupados[data_parte].append(hora_parte)
+                    
+                    slots_str_agrupado = []
+                    for data, horas in slots_agrupados.items():
+                        horas_str = ", ".join(horas)
+                        slots_str_agrupado.append(f"""Data {data}:
+    {horas_str}""")
+
+                    slots_final_output = "\n".join(slots_str_agrupado)
+
+                    return (f"""Encontrei {len(slots_encontrados)} horários disponíveis próximos:
+                            
+{slots_final_output}
+
+Qual destes horários você gostaria de agendar? (Ex: 'Quero dia 04/12 às 10:00')"""
+)
+        except Exception as e:
+            from services.metrics import registrar_evento
+            registrar_evento(
+                cliente_id=chat_id,
+                event_id='exibir_horario_flex',
+                tipo_metrica='agendamento',
+                status='error_critico',
+                detalhes=f"Falha CRÍTICA no agente date (exibir_proximos_horarios_flex): {str(e)}"
+            )
+            logger.error(f"Erro CRÍTICO no Agent_date (Groq/Tool-Call): {e}", exc_info=True)
+            raise
