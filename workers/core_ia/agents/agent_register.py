@@ -2,34 +2,16 @@ import os
 import json 
 from groq import Groq
 
-from core_ia.services_agents.prompts_agents import prompt_register
 from services.redis_client import delete_history, delete_session_state
-from core_ia.services_agents.tool_reset import REROUTE_COMPLETED_STATUS
-from core_api.django_api_service import DjangoApiService
 from services.metrics import registrar_evento
+
+from core_ia.services_agents.prompts_agents import prompt_register
+from core_ia.services_agents.tool_reset import REROUTE_COMPLETED_STATUS
+from core_ia.services_agents.tools_schemas import REGISTRATION_TOOL_SCHEMA
+from core_api.django_api_service import DjangoApiService
+
 groq_service = Groq()
 
-REGISTRATION_TOOL_SCHEMA = {
-    "type": "function", 
-    "function": {
-        "name": "enviar_dados_user",
-        "description": "Registra um novo usuário no banco de dados com seu ID de chat e nome. Use esta ferramenta APENAS se o usuário pedir para se cadastrar e fornecer seu nome VERDADEIRO **NUNCA USE PLACEHOLDERS**.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "chat_id": {
-                    "type": "string",
-                    "description": "O ID único do chat/usuário do WhatsApp. Essencial para o registro."
-                },
-                "name": {
-                    "type": "string",
-                    "description": "O nome fornecido pelo usuário para o registro na conversa."
-                }
-            },
-            "required": ["chat_id", "name"] 
-        }
-    }
-}
 def api_register_user_tool(chat_id: str, name: str) -> dict:
     """
     Função Helper para ser chamada pelo Agent (LLM).
@@ -39,8 +21,6 @@ def api_register_user_tool(chat_id: str, name: str) -> dict:
     payload = {"chat_id": chat_id, "name": name}
     response = DjangoApiService.register_user(payload)
     if response and response.get('status') == 'SUCCESS':
-        # Nota: Ajustei tipo_metrica para 'cadastro', se não estiver mapeado em models.py, 
-        # use o tipo_metrica mais próximo, como 'agendamento'
         registrar_evento(
             cliente_id=chat_id,
             event_id=f"registro_{chat_id}",
@@ -48,8 +28,7 @@ def api_register_user_tool(chat_id: str, name: str) -> dict:
             status='success',
             detalhes=f"Novo usuário registrado: {name}"
         )
-    
-    # Retorna o JSON de resposta para o LLM.
+
     return response
 
 class Agent_register():
@@ -112,9 +91,9 @@ class Agent_register():
                     registration_result = function_to_call(**function_args) 
                     if (registration_result and 
                         isinstance(registration_result, dict) and 
-                        registration_result.get('username')): # ✅ Usa .get() para verificar a chave no dicionário
+                        registration_result.get('username')): 
                         
-                        nome_usuario = registration_result['username'] # ✅ Acessa como chave de dicionário
+                        nome_usuario = registration_result['username']
                         delete_history(chat_id)
                         delete_session_state(chat_id)
                         
@@ -143,5 +122,11 @@ Seja bem vindo {nome_usuario}! Como posso te ajudar hoje?"""
             return resposta_ia
             
         except Exception as e:
-            print(f"Erro ao chamar a API da Groq: {e}")
-            return "Desculpe, estou tendo problemas técnicos para responder agora."
+            registrar_evento(
+                cliente_id=chat_id,
+                event_id='agent_critical_fail',
+                tipo_metrica='cancelamento',
+                status='error_critico',
+                detalhes=f"Falha CRÍTICA no agente cancel (Groq/JSON/Infra): {str(e)}"
+            )
+            raise
