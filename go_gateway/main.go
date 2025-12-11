@@ -19,21 +19,27 @@ var ctx = context.Background()
 const MAX_BODY_SIZE int64 = 1048576 
 
 func main() {
-    // ... (Código existente de inicialização do HMAC e Redis) ...
 	// 1. Inicializa o Serviço HMAC
 	if err := hmac.InitSecret(); err != nil {
 		log.Fatalf("❌ Falha crítica ao carregar a chave HMAC: %v", err)
 	}
 
-	// 2. Inicializa o Serviço Redis (com teste de conexão)
+	// 2. Inicializa o Serviço Redis (DB 0 - Fila Principal)
 	if err := redis.InitClient(ctx); err != nil {
-		log.Fatalf("❌ Falha crítica ao inicializar o Redis: %v", err)
+		log.Fatalf("❌ Falha crítica ao inicializar o Redis (DB 0): %v", err)
 	}
-	log.Println("✅ Conexão Redis estabelecida com sucesso!")
+	log.Println("✅ Conexão Redis DB 0 (Fila) estabelecida com sucesso!")
+
+	// 2.1. ⭐️ NOVO: Inicializa o Serviço Redis (DB 3 - Idempotência)
+	if err := redis.InitIdempotencyClient(ctx); err != nil {
+		log.Fatalf("❌ Falha crítica ao inicializar o Redis (DB 3 - Idempotência): %v", err)
+	}
+	log.Println("✅ Conexão Redis DB 3 (Idempotência) estabelecida com sucesso!")
+
 
 	// 3. Configuração do Servidor HTTP
 	http.HandleFunc("/webhook", webhookHandler)
-
+    // ... (O restante do código main permanece o mesmo) ...
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

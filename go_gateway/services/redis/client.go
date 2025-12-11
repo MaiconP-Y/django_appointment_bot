@@ -17,6 +17,9 @@ const ChannelName = "new_user_queue"
 // Client (será inicializado uma vez)
 var Client *redis.Client
 
+// IdempotencyClient (DB 3 - Chaves de Idempotência)
+var IdempotencyClient *redis.Client
+
 // --- NOVAS CONSTANTES PARA IDEMPOTÊNCIA ---
 const idempotencyKeyPrefix = "idempotency:event:" // O prefixo para as chaves no Redis (boa prática)
 const idempotencyTTL = time.Hour * 3             // TTL (Tempo de Vida) da chave: 24 horas (otimizado)
@@ -65,9 +68,46 @@ func PublishMessage(ctx context.Context, rawBody []byte) error {
     return nil
 }
 
-// =========================================================================
-// === NOVA LÓGICA DE IDEMPOTÊNCIA ===
-// =========================================================================
+func InitIdempotencyClient(ctx context.Context) error {
+	redisHost := os.Getenv("REDIS_HOST")
+	if redisHost == "" {
+		redisHost = "redis"
+	}
+
+	IdempotencyClient = redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s", redisHost, "6379"),
+		DB:   3, // ⬅️ DB 3 para a idempotência
+	})
+
+	// Teste de conexão: PING com um timeout seguro de 3 segundos
+	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	
+	_, err := IdempotencyClient.Ping(pingCtx).Result()
+	if err != nil {
+		return fmt.Errorf("falha ao conectar e pingar o Redis (DB 3): %w", err)
+	}
+	
+	return nil
+}
+
+// CheckAndSetIdempotency: Tenta registrar o eventID no Redis.
+// SETNX (Set if Not Exists) é a operação atômica (simultânea) que previne a duplicata.
+// Retorna (isDuplicate, error).
+func CheckAndSetIdempotency(ctx context.Context, eventID string) (bool, error) {
+	key := idempotencyKeyPrefix + eventID // Ex: "idempotency:event:AC53DEF098950AC3..."
+
+	// ⭐️ ALTERADO: Usando IdempotencyClient (DB 3)
+	result, err := IdempotencyClient.SetNX(ctx, key, "1", idempotencyTTL).Result()
+
+	if err != nil {
+		// Falha de comunicação com o Redis (ex: rede caiu).
+		return false, fmt.Errorf("erro de comunicação com Redis DB 3 durante SETNX: %w", err)
+	}
+
+	// Se result == false, significa que a chave JÁ EXISTIA (Duplicata).
+	return !result, nil
+}
 
 // ExtractEventID: Analisa o JSON bruto para obter o ID único.
 // É crucial para extrair o ID antes de fazer o SETNX.
@@ -85,25 +125,4 @@ func ExtractEventID(rawBody []byte) (string, error) {
 	}
 
 	return payload.ID, nil
-}
-
-// CheckAndSetIdempotency: Tenta registrar o eventID no Redis.
-// SETNX (Set if Not Exists) é a operação atômica (simultânea) que previne a duplicata.
-// Retorna (isDuplicate, error).
-func CheckAndSetIdempotency(ctx context.Context, eventID string) (bool, error) {
-	key := idempotencyKeyPrefix + eventID // Ex: "idempotency:event:AC53DEF098950AC3..."
-
-	// Client.SetNX(context, key, value, expiration)
-    // 1. Se a chave NÃO existir, ele a cria e retorna 'true'.
-    // 2. Se a chave JÁ EXISTIR, ele NÃO a cria e retorna 'false'.
-	result, err := Client.SetNX(ctx, key, "1", idempotencyTTL).Result()
-
-	if err != nil {
-		// Falha de comunicação com o Redis (ex: rede caiu).
-		return false, fmt.Errorf("erro de comunicação com Redis durante SETNX: %w", err)
-	}
-
-	// Queremos saber se É uma duplicata.
-	// Se result == false, significa que a chave JÁ EXISTIA (Duplicata).
-	return !result, nil
 }
