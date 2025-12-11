@@ -16,6 +16,32 @@ REDIS_DB = int(os.environ.get('REDIS_DB', 0))
 USER_PROFILE_CACHE_TTL = 60 * 180
 USER_PROFILE_CACHE_PREFIX = "cache:user_profile:"
 
+# 🎯 NOVO: Função para invalidar o cache de perfil
+def delete_user_profile_cache(chat_id: str):
+    """
+    Deleta o cache de perfil do usuário, forçando o sistema a recarregar
+    os dados (incluindo agendamentos) do BaaS na próxima consulta.
+    """
+    # Pega o cliente Redis, que será 'None' se a conexão falhou
+    r = get_redis_client() 
+    
+    if r is None:
+        logger.warning("⚠️ Redis indisponível. Falha ao deletar cache de perfil.")
+        return
+
+    # A chave deve ser a mesma usada para SETAR o cache (ex: 'cache:user_profile:...')
+    key = f"cache:user_profile:{chat_id}"
+    
+    # O método 'delete' retorna o número de chaves deletadas (0 ou 1)
+    # ⚠️ CORREÇÃO: Usando a variável 'r' (o resultado de get_redis_client())
+    result = r.delete(key) 
+    
+    if result > 0:
+        logger.info(f"🗑️ Cache de perfil DELETADO com sucesso para {chat_id}.")
+    else:
+        # Isso não é um erro, apenas significa que o cache já havia expirado/não existia.
+        logger.info(f"ℹ️ Tentativa de deleção do cache para {chat_id}, mas a chave não existia.")
+
 def get_user_profile_cache(chat_id: str) -> dict | None:
     """Busca o perfil de usuário do cache Redis."""
     key = USER_PROFILE_CACHE_PREFIX + chat_id

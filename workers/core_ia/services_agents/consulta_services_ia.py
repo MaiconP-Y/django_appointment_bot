@@ -8,7 +8,8 @@ from typing import Dict, Any, List, Optional
 from services.service_api_calendar import ServicesCalendar
 # IMPORTS DO NOVO SERVIÇO DE COMUNICAÇÃO HTTP (BaaS)
 from core_api.django_api_service import DjangoApiService
-import requests
+from services.redis_client import delete_user_profile_cache
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class ConsultaService:
         # Chama o serviço HTTP. Zero ORM.
         response = DjangoApiService.save_appointment(payload)
         if response.get('status') == 'SUCCESS':
+            delete_user_profile_cache(chat_id)
             logger.info(f"✅ Agendamento salvo via BaaS - Cliente: {chat_id}")
         else:
             logger.error(f"❌ Falha ao salvar agendamento via BaaS: {response.get('message')}")
@@ -109,6 +111,7 @@ class ConsultaService:
         # 4. Checagem final de integridade
         if response_data.get('status') == 'SUCCESS':
             logger.info(f"✅ Cancelamento COMPLETO - Cliente: {chat_id}, Slot: {numero_consulta}")
+            delete_user_profile_cache(chat_id)
             return {
                 "status": "SUCCESS", 
                 "message": "Consulta cancelada e removida da agenda.",

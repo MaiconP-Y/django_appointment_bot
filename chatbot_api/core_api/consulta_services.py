@@ -13,7 +13,7 @@ from datetime import datetime
 from django.utils import timezone
 from services.service_api_calendar import ServicesCalendar
 # Importa o novo Proxy HTTP
-from services.django_api_service import DjangoApiService 
+from workers.core_api.django_api_service import DjangoApiService 
 # ----------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
