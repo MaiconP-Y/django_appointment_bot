@@ -1,49 +1,18 @@
-from services.redis_client import update_session_state, get_user_profile_cache, set_user_profile_cache
+from services.redis_client import update_session_state
 
 from core_ia.agents.agent_register import Agent_register
 from core_ia.agents.agent_date import Agent_date
 from core_ia.agents.agent_router import Agent_router
 from core_ia.agents.agent_consul_cancel import Agent_cancel
 from core_ia.agents.agent_info import Agent_info
+from core_ia.utils.user_data_service import get_user_name_from_db
 import logging 
-from core_api.django_api_service import DjangoApiService
+
 logger = logging.getLogger(__name__)
 
 # 🎯 NOVO SINAL GLOBAL
 REROUTE_SIGNAL = "__FORCE_ROUTE_INTENT__" 
 MENSAGEM_ERRO_SUPORTE = "Desculpe, ocorreu um erro técnico inesperado no nosso sistema de IA. Por favor, entre em contato diretamente com nosso suporte."
-
-
-def get_user_name_from_db(chat_id: str) -> str | None:
-    """
-    Busca o nome do usuário no BaaS, utilizando o Redis Cache como primeira linha.
-    """
-    
-    # 1. TENTAR LER DO CACHE REDIS (Busca o valor que agora tem TTL de 24h)
-    cached_user_data = get_user_profile_cache(chat_id)
-    
-    if cached_user_data:
-        logger.info(f"✅ User data para {chat_id} ENCONTRADO no Redis Cache (TTL de 24h).")
-        return cached_user_data.get('username')
-
-    # 2. SE NÃO ESTIVER NO CACHE, BUSCAR NO DJANGO
-    logger.info(f"⏳ User data para {chat_id} não encontrado no cache. Buscando via HTTP...")
-    
-    try:
-        user_data = DjangoApiService.get_user_data(chat_id)
-        
-        if user_data and user_data.get('status') == 'SUCCESS':
-            # 3. SALVAR NO CACHE (Aplica o TTL de 24h)
-            set_user_profile_cache(chat_id, user_data)
-            logger.info(f"💾 User data de {chat_id} salvo no cache com TTL de 3h.")
-            
-            return user_data.get('username')
-        
-        return None 
-
-    except Exception as e:
-        logger.error(f"❌ Erro CRÍTICO HTTP ao buscar dados de user para {chat_id}: {e}", exc_info=True)
-        return None
 
 class agent_service(): 
     """

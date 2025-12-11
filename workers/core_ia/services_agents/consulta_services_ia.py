@@ -9,6 +9,7 @@ from services.service_api_calendar import ServicesCalendar
 # IMPORTS DO NOVO SERVIÇO DE COMUNICAÇÃO HTTP (BaaS)
 from core_api.django_api_service import DjangoApiService
 from services.redis_client import delete_user_profile_cache
+from core_ia.utils.user_data_service import get_user_data_full_cached
 
 
 logger = logging.getLogger(__name__)
@@ -46,14 +47,16 @@ class ConsultaService:
     def listar_agendamentos(chat_id: str) -> Optional[List[Dict[str, Any]]]:
         """
         [HELPER FUNCTION]
-        Busca dados de usuário e agendamentos ativos no BaaS.
+        Busca dados de usuário e agendamentos ativos, utilizando o cache de perfil.
+        (Antigamente chamava DjangoApiService.get_user_data diretamente)
         """
-        user_data = DjangoApiService.get_user_data(chat_id)
+        # ⭐️ USA A FUNÇÃO CENTRALIZADA DE CACHE/DB
+        user_data = get_user_data_full_cached(chat_id)
         
         if not user_data or user_data.get("status") != "SUCCESS":
             return []
             
-        # O BaaS (views.py) já faz o filtro de datas passadas e retorna a lista limpa.
+        # O cache contém o dict completo que inclui a lista 'appointments'
         return user_data.get("appointments", [])
 
     @staticmethod
